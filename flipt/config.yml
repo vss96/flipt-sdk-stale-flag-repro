@@ -1,0 +1,16 @@
+log:
+  level: DEBUG
+
+authentication:
+  required: true
+  methods:
+    token:
+      enabled: true
+      bootstrap:
+        token: test-token-123
+
+db:
+  url: postgres://flipt:flipt@postgres:5432/flipt?sslmode=disable
+
+storage:
+  type: database

@@ -1,0 +1,5 @@
+server:
+  port: 9090
+
+identity:
+  private-key-path: /keys/private.pem

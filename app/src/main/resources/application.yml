@@ -1,0 +1,7 @@
+server:
+  port: 8081
+
+flipt:
+  url: ${FLIPT_URL:http://localhost:8080}
+  identity-server-url: ${IDENTITY_SERVER_URL:http://localhost:9090}
+  update-interval-seconds: ${UPDATE_INTERVAL_SECONDS:10}
