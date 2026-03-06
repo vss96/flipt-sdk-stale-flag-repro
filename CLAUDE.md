@@ -18,7 +18,7 @@ Reproduction project (`flipt-sdk-stale-flag-repro`) for investigating stale feat
 ./gradlew :app:bootJar
 ./gradlew :identity-server:bootJar
 
-# Run the full stack (Postgres, 3x Flipt, nginx LB, app)
+# Run the full stack (MinIO, 3x Flipt, nginx LB, app)
 docker compose up --build
 
 # Toggle the test-flag to test change detection
@@ -44,13 +44,24 @@ There are no tests — this is a reproduction/debugging project.
 
 **Infrastructure (docker-compose.yml):**
 
-- 3 Flipt instances (`flipt-1`, `flipt-2`, `flipt-3`) sharing a Postgres database, with token auth enabled (bootstrap token: `test-token-123`)
+- MinIO (S3-compatible object storage) stores feature flag YAML files
+- 3 Flipt instances (`flipt-1`, `flipt-2`, `flipt-3`) using S3 object storage backed by MinIO, with token auth enabled (bootstrap token: `test-token-123`)
 - nginx load balancer (`lb`) fronting the Flipt instances — HTTPS on port 8443, HTTP on port 8080
 - TLS certs auto-generated at startup via `generate-tls-certs` init container
-- Feature flags seeded from `flipt/features.yml` on first Flipt startup (`flipt-1` runs import)
+- Feature flags seeded from `flipt/features/` into MinIO by `seed-flags` init container on startup
 - Flipt config in `flipt/config.yml`
 
-**Key detail:** The `toggle-flag.sh` script modifies `flipt/features.yml` locally but Flipt uses **database storage** (not filesystem), so toggling requires the Flipt API. The script uses `sed`/`awk` on the local file. To toggle via API, use the Flipt HTTP API through the load balancer at `localhost:8080`.
+**Storage & ETag bug reproduction:**
+
+Feature flags are split across two files in `flipt/features/`:
+- `flags.features.yml` — contains `test-flag` (alphabetically first)
+- `other.features.yml` — contains `disabled-flag` (alphabetically last)
+
+Files use `*.features.yml` naming to match Flipt's default file discovery convention.
+
+Flipt's file storage builds namespace ETags by walking files alphabetically. Due to a bug in `internal/storage/fs/snapshot.go`, `addDoc()` overwrites the namespace ETag with the last file's ETag (`other.features.yml`). When only `flags.features.yml` changes, the namespace ETag stays the same, the SDK gets `304 Not Modified`, and returns stale data.
+
+The `toggle-flag.sh` script downloads `flags.features.yml` from MinIO via `mc`, toggles `test-flag`, and uploads it back. Flipt polls MinIO every 5s and detects the file change, but the SDK never picks it up due to the ETag bug.
 
 ## Tech Stack
 
@@ -58,3 +69,4 @@ There are no tests — this is a reproduction/debugging project.
 - Gradle with Kotlin DSL
 - flipt-client-java 1.2.1 (local JAR with JNA native bindings)
 - Docker Compose for infrastructure
+- MinIO for S3-compatible object storage

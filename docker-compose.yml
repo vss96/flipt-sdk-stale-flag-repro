@@ -6,27 +6,45 @@ services:
       - ./scripts:/scripts:ro
       - certs:/certs
 
-  postgres:
-    image: postgres:16-alpine
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
     environment:
-      POSTGRES_USER: flipt
-      POSTGRES_PASSWORD: flipt
-      POSTGRES_DB: flipt
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U flipt"]
-      interval: 3s
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
       timeout: 3s
       retries: 10
 
+  seed-flags:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./flipt/features:/seed:ro
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        mc alias set m http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing m/flipt &&
+        mc cp /seed/flags.features.yml m/flipt/flags.features.yml &&
+        mc cp /seed/other.features.yml m/flipt/other.features.yml
+
   flipt-1:
     image: flipt/flipt:v1.55.1
-    command: sh -c "./flipt --force-migrate & sleep 3 && ./flipt import /etc/flipt/seed/features.yml && wait"
+    command: ["./flipt"]
     volumes:
       - ./flipt/config.yml:/etc/flipt/config/default.yml:ro
-      - ./flipt/features.yml:/etc/flipt/seed/features.yml:ro
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
     depends_on:
-      postgres:
-        condition: service_healthy
+      seed-flags:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 5s
@@ -38,7 +56,12 @@ services:
     command: ["./flipt"]
     volumes:
       - ./flipt/config.yml:/etc/flipt/config/default.yml:ro
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
     depends_on:
+      seed-flags:
+        condition: service_completed_successfully
       flipt-1:
         condition: service_healthy
     healthcheck:
@@ -52,7 +75,12 @@ services:
     command: ["./flipt"]
     volumes:
       - ./flipt/config.yml:/etc/flipt/config/default.yml:ro
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
     depends_on:
+      seed-flags:
+        condition: service_completed_successfully
       flipt-1:
         condition: service_healthy
     healthcheck:
@@ -97,6 +125,10 @@ services:
         condition: service_healthy
       flipt-3:
         condition: service_healthy
+
+  mc:
+    image: minio/mc
+    profiles: ["tools"]
 
 volumes:
   certs:

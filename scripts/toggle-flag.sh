@@ -1,40 +1,37 @@
 #!/bin/bash
-# Toggle the test-flag in features.yml
-# Flipt with local storage watches the filesystem, so changes propagate automatically.
+# Toggle the test-flag in MinIO S3 storage.
+# Downloads flags.yml from MinIO, toggles the value, and uploads it back.
+# Flipt polls S3 every 5s and picks up the change.
 
 set -e
 
-FEATURES_FILE="$(dirname "$0")/../flipt/features.yml"
+cd "$(dirname "$0")/.."
 
-if [ ! -f "$FEATURES_FILE" ]; then
-  echo "ERROR: features.yml not found at $FEATURES_FILE"
-  exit 1
-fi
+MC_RUN="docker compose run --rm -T --entrypoint sh mc -c"
+MC_ALIAS="mc alias set m http://minio:9000 minioadmin minioadmin >/dev/null 2>&1"
+
+# Download current flags.yml from MinIO
+CONTENT=$($MC_RUN "$MC_ALIAS && mc cat m/flipt/flags.features.yml")
 
 # Read current state
-CURRENT=$(grep -A3 'key: test-flag' "$FEATURES_FILE" | grep 'enabled:' | awk '{print $2}')
+CURRENT=$(echo "$CONTENT" | grep -A3 'key: test-flag' | grep 'enabled:' | awk '{print $2}')
 
 echo "=== Flag Toggle ==="
 echo "Current test-flag enabled: $CURRENT"
 echo "Toggling at: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 if [ "$CURRENT" = "true" ]; then
-  # Use a temp file for portable sed -i behavior
-  sed 's/\(key: test-flag\)/\1/' "$FEATURES_FILE" > /dev/null
-  # Toggle: find the enabled line after test-flag and change it
-  awk '/key: test-flag/{found=1} found && /enabled:/{sub(/enabled: true/, "enabled: false"); found=0} 1' \
-    "$FEATURES_FILE" > "${FEATURES_FILE}.tmp" && mv "${FEATURES_FILE}.tmp" "$FEATURES_FILE"
+  NEW_CONTENT=$(echo "$CONTENT" | awk '/key: test-flag/{found=1} found && /enabled:/{sub(/enabled: true/, "enabled: false"); found=0} 1')
   echo "Toggled test-flag: true → false"
 else
-  awk '/key: test-flag/{found=1} found && /enabled:/{sub(/enabled: false/, "enabled: true"); found=0} 1' \
-    "$FEATURES_FILE" > "${FEATURES_FILE}.tmp" && mv "${FEATURES_FILE}.tmp" "$FEATURES_FILE"
+  NEW_CONTENT=$(echo "$CONTENT" | awk '/key: test-flag/{found=1} found && /enabled:/{sub(/enabled: false/, "enabled: true"); found=0} 1')
   echo "Toggled test-flag: false → true"
 fi
 
+# Upload modified file back to MinIO
+echo "$NEW_CONTENT" | $MC_RUN "$MC_ALIAS && mc pipe m/flipt/flags.features.yml"
+
 echo ""
-echo "New features.yml content:"
-cat "$FEATURES_FILE"
-echo ""
-echo "Now watch the app logs for flag change detection."
-echo "Expected detection within updateInterval (10s)."
-echo "If it takes longer or requires client rebuild (50s), the issue is reproduced."
+echo "Updated flags.yml uploaded to MinIO."
+echo "Flipt will poll and pick up the change within poll_interval (5s)."
+echo "If the ETag bug reproduces, the SDK will NOT detect the change."

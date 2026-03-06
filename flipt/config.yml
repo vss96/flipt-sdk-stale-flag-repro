@@ -9,8 +9,12 @@ authentication:
       bootstrap:
         token: test-token-123
 
-db:
-  url: postgres://flipt:flipt@postgres:5432/flipt?sslmode=disable
-
 storage:
-  type: database
+  type: object
+  object:
+    type: s3
+    s3:
+      region: us-east-1
+      bucket: flipt
+      endpoint: http://minio:9000
+      poll_interval: "5s"

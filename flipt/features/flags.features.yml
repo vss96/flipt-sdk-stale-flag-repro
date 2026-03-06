@@ -4,7 +4,3 @@ flags:
     name: Test Flag
     type: BOOLEAN_FLAG_TYPE
     enabled: false
-  - key: disabled-flag
-    name: Disabled Flag
-    type: BOOLEAN_FLAG_TYPE
-    enabled: false
