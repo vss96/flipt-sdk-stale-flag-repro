@@ -18,15 +18,16 @@ import java.util.*
 
 @RestController
 class TokenController(
-    @param:Value("\${identity.private-key-path}") private val privateKeyPath: String
+    @param:Value("\${identity.private-key-path}") private val privateKeyPath: String,
+    @param:Value("\${identity.token-expiry-seconds:120}") private val tokenExpirySeconds: Long
 ) {
     private val log = LoggerFactory.getLogger(TokenController::class.java)
 
     @GetMapping("/token")
-    fun getToken(): Map<String, String> {
+    fun getToken(): Map<String, Any> {
         val privateKey = loadPrivateKey()
         val now = Date()
-        val expiry = Date(now.time + 86_400_000) // 86400 seconds (24 hours)
+        val expiry = Date(now.time + tokenExpirySeconds * 1000)
 
         val claims = JWTClaimsSet.Builder()
             .issuer("flipt-identity-server")
@@ -40,8 +41,11 @@ class TokenController(
         signedJWT.sign(RSASSASigner(privateKey))
 
         val token = signedJWT.serialize()
-        log.info("Issued JWT: sub={}, exp={}", claims.subject, claims.expirationTime)
-        return mapOf("token" to token)
+        log.info("Issued JWT: sub={}, exp={}, ttl={}s", claims.subject, claims.expirationTime, tokenExpirySeconds)
+        return mapOf(
+            "token" to token,
+            "expires_at" to expiry.toInstant().toString()
+        )
     }
 
     private fun loadPrivateKey(): RSAPrivateKey {

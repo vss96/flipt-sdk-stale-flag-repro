@@ -3,3 +3,4 @@ server:
 
 identity:
   private-key-path: /keys/private.pem
+  token-expiry-seconds: ${TOKEN_EXPIRY_SECONDS:120}
