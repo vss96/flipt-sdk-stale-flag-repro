@@ -3,14 +3,9 @@ package com.example.app
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
-import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * Consumer that periodically evaluates feature flags via FliptClientProvider.
- * Mirrors production pattern: separate service from client lifecycle management.
- */
 @Component
 class FeatureFlagService(
     private val provider: FliptClientProvider
@@ -28,33 +23,18 @@ class FeatureFlagService(
         val now = Instant.now()
 
         try {
-            val client = provider.getClient()
-            val result = client.evaluateBoolean("test-flag", "entity-1", mapOf<String, String>())
+            val result = provider.client.evaluateBoolean("test-flag", "entity-1", mapOf<String, String>())
             val currentValue = result.isEnabled
 
-            val listFlagValue = try {
-                client.listFlags()?.find { it.key == "test-flag" }?.isEnabled
-            } catch (e: Exception) {
-                null
-            }
-
             if (lastKnownFlagValue != null && lastKnownFlagValue != currentValue) {
-                val lastChange = lastValueChangeDetected
                 lastValueChangeDetected = now
                 log.info("  ┌─────────────────────────────────────────────────────────┐")
                 log.info("  │ *** FLAG VALUE CHANGED: {} → {} ***", lastKnownFlagValue, currentValue)
                 log.info("  │ Detected at: {}", now)
                 log.info("  │ Evaluation #{}", evalNum)
-                log.info("  │ listFlags(test-flag)={}", listFlagValue)
-                if (lastChange != null) {
-                    log.info("  │ Time since last change: {}s", Duration.between(lastChange, now).seconds)
-                }
                 log.info("  └─────────────────────────────────────────────────────────┘")
             } else {
-                log.info(
-                    "  [eval #{}] test-flag={}, listFlags={}, time={}",
-                    evalNum, currentValue, listFlagValue, now
-                )
+                log.info("  [eval #{}] test-flag={}, time={}", evalNum, currentValue, now)
             }
 
             lastKnownFlagValue = currentValue

@@ -1,78 +1,67 @@
 package com.example.app
 
 import com.example.app.config.AppProperties
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import io.flipt.client.FliptClient
-import io.flipt.client.models.ClientTokenAuthentication
+import io.flipt.client.models.AuthenticationLease
 import io.flipt.client.models.ErrorStrategy
-import io.flipt.client.models.TlsConfig
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.DisposableBean
 import org.springframework.stereotype.Component
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.time.Duration
 import java.time.Instant
 
-/**
- * Mirrors production FliptClientConfiguration pattern:
- * - Holds a @Volatile FliptClient + token with expiry tracking
- * - getClient() returns existing client if token not expired, otherwise synchronized rebuild
- * - Token expiry set to 24h so client is NOT rebuilt during test
- */
 @Component
 class FliptClientProvider(
     private val props: AppProperties
 ) : DisposableBean {
 
     private val log = LoggerFactory.getLogger(FliptClientProvider::class.java)
+    private val httpClient = HttpClient.newHttpClient()
+    private val objectMapper = jacksonObjectMapper()
 
-    @Volatile
-    private var client: FliptClient? = null
-
-    @Volatile
-    private var tokenExpiresAt: Instant = Instant.MIN
-
-    private val tokenExpirySeconds = 86400L // 24h — client won't be rebuilt during test
+    final val client: FliptClient
 
     init {
         log.info("╔══════════════════════════════════════════════════════════════╗")
-        log.info("║  Flipt Client SDK — Production Pattern (Provider+Consumer)  ║")
-        log.info("║  updateInterval={}s, tokenExpiry={}s                     ║", props.updateIntervalSeconds, tokenExpirySeconds)
-        log.info("║  ClientTokenAuthentication + ErrorStrategy.FAIL             ║")
+        log.info("║  Flipt Client SDK — Auth Lease (token refresh via SDK)      ║")
+        log.info("║  updateInterval={}s, identityServer={}                      ║", props.updateIntervalSeconds, props.identityServerUrl)
         log.info("╚══════════════════════════════════════════════════════════════╝")
-    }
 
-    fun getClient(): FliptClient {
-        val existing = client
-        if (existing != null && Instant.now().isBefore(tokenExpiresAt)) {
-            return existing
-        }
-        return synchronized(this) {
-            // Double-check inside lock
-            val current = client
-            if (current != null && Instant.now().isBefore(tokenExpiresAt)) {
-                return@synchronized current
-            }
-            log.info("  [provider] Token expired or no client — rebuilding FliptClient")
-            current?.close()
-            createClient().also {
-                client = it
-                tokenExpiresAt = Instant.now().plusSeconds(tokenExpirySeconds)
-                log.info("  [provider] New client created, token expires at {}", tokenExpiresAt)
-            }
-        }
-    }
-
-    private fun createClient(): FliptClient {
-        return FliptClient.builder()
+        client = FliptClient.builder()
             .url(props.url)
-            .authentication(ClientTokenAuthentication("test-token-123"))
+            .authenticationProvider { fetchAuthLease() }
             .updateInterval(Duration.ofSeconds(props.updateIntervalSeconds.toLong()))
-            .tlsConfig(TlsConfig.builder().caCertFile("/certs/ca.pem").build())
             .errorStrategy(ErrorStrategy.FAIL)
+            .build()
+    }
+
+    private fun fetchAuthLease(): AuthenticationLease {
+        log.info("  [auth-lease] Fetching JWT from identity server: {}", props.identityServerUrl)
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create("${props.identityServerUrl}/token"))
+            .GET()
+            .build()
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        val body: Map<String, String> = objectMapper.readValue(response.body())
+
+        val token = body["token"] ?: throw IllegalStateException("No token in identity server response")
+        val expiresAt = Instant.parse(body["expires_at"] ?: throw IllegalStateException("No expires_at in response"))
+
+        log.info("  [auth-lease] Got JWT, expires at {} (in {}s)", expiresAt, Duration.between(Instant.now(), expiresAt).seconds)
+
+        return AuthenticationLease.expiring(expiresAt)
+            .jwt(token)
             .build()
     }
 
     override fun destroy() {
         log.info("Shutting down FliptClientProvider")
-        client?.close()
+        client.close()
     }
 }
