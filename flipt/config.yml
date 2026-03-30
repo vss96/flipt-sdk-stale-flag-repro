@@ -8,13 +8,8 @@ authentication:
       enabled: true
       bootstrap:
         token: test-token-123
-
-storage:
-  type: object
-  object:
-    type: s3
-    s3:
-      region: us-east-1
-      bucket: flipt
-      endpoint: http://minio:9000
-      poll_interval: "5s"
+    jwt:
+      enabled: true
+      public_key_file: /etc/flipt/keys/public.pem
+      validate_claims:
+        issuer: flipt-identity-server
