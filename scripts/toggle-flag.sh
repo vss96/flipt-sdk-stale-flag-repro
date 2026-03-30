@@ -1,37 +1,31 @@
 #!/bin/bash
-# Toggle the test-flag in MinIO S3 storage.
-# Downloads flags.yml from MinIO, toggles the value, and uploads it back.
-# Flipt polls S3 every 5s and picks up the change.
+# Toggle the test-flag via Flipt HTTP API.
 
 set -e
 
-cd "$(dirname "$0")/.."
+FLIPT_URL="${FLIPT_URL:-http://localhost:8080}"
+AUTH_TOKEN="${FLIPT_AUTH_TOKEN:-test-token-123}"
 
-MC_RUN="docker compose run --rm -T --entrypoint sh mc -c"
-MC_ALIAS="mc alias set m http://minio:9000 minioadmin minioadmin >/dev/null 2>&1"
-
-# Download current flags.yml from MinIO
-CONTENT=$($MC_RUN "$MC_ALIAS && mc cat m/flipt/flags.features.yml")
-
-# Read current state
-CURRENT=$(echo "$CONTENT" | grep -A3 'key: test-flag' | grep 'enabled:' | awk '{print $2}')
+# Get current flag state
+CURRENT=$(curl -s \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  "$FLIPT_URL/api/v1/namespaces/default/flags/test-flag" | \
+  grep -o '"enabled":[a-z]*' | head -1 | cut -d: -f2)
 
 echo "=== Flag Toggle ==="
 echo "Current test-flag enabled: $CURRENT"
 echo "Toggling at: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 if [ "$CURRENT" = "true" ]; then
-  NEW_CONTENT=$(echo "$CONTENT" | awk '/key: test-flag/{found=1} found && /enabled:/{sub(/enabled: true/, "enabled: false"); found=0} 1')
-  echo "Toggled test-flag: true → false"
+  NEW_VALUE="false"
 else
-  NEW_CONTENT=$(echo "$CONTENT" | awk '/key: test-flag/{found=1} found && /enabled:/{sub(/enabled: false/, "enabled: true"); found=0} 1')
-  echo "Toggled test-flag: false → true"
+  NEW_VALUE="true"
 fi
 
-# Upload modified file back to MinIO
-echo "$NEW_CONTENT" | $MC_RUN "$MC_ALIAS && mc pipe m/flipt/flags.features.yml"
+curl -s -o /dev/null -w "HTTP %{http_code}\n" \
+  -X PUT "$FLIPT_URL/api/v1/namespaces/default/flags/test-flag" \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"Test Flag\",\"enabled\":$NEW_VALUE}"
 
-echo ""
-echo "Updated flags.yml uploaded to MinIO."
-echo "Flipt will poll and pick up the change within poll_interval (5s)."
-echo "If the ETag bug reproduces, the SDK will NOT detect the change."
+echo "Toggled test-flag: $CURRENT → $NEW_VALUE"
